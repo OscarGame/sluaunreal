@@ -25,13 +25,16 @@
 #include <map>
 #include "LuaWrapper.h"
 #include "LuaEnums.h"
-#include "LuaCppBinding.h"
 #include "LuaArray.h"
 #include "LuaMap.h"
 #include "LuaSocketWrap.h"
 #include "LuaMemoryProfile.h"
+#include "HAL/RunnableThread.h"
 
 namespace slua {
+
+	const int MaxLuaExecTime = 5; // in second
+
     int import(lua_State *L) {
         const char* name = LuaObject::checkValue<const char*>(L,1);
         if(name) {
@@ -58,8 +61,7 @@ namespace slua {
             size_t len;
             const char* s = luaL_tolstring(L, n, &len);
             str+="\t";
-            if(s)
-                str+=s;
+            if(s) str+=UTF8_TO_TCHAR(s);
         }
         Log::Log("%s",TCHAR_TO_UTF8(*str));
         return 0;
@@ -124,15 +126,16 @@ namespace slua {
     TMap<int,LuaState*> stateMapFromIndex;
     static int StateIndex = 0;
 
-    LuaState::LuaState()
-        :loadFileDelegate(nullptr)
-        ,L(nullptr)
-        ,cacheObjRef(LUA_NOREF)
-        ,root(nullptr)
-        ,stackCount(0)
-        ,si(0)
+	LuaState::LuaState(const char* name)
+		:loadFileDelegate(nullptr)
+		, L(nullptr)
+		, cacheObjRef(LUA_NOREF)
+		, root(nullptr)
+		, stackCount(0)
+		, si(0)
+		, deadLoopCheck(nullptr)
     {
-        
+        if(name) stateName=UTF8_TO_TCHAR(name);
     }
 
     LuaState::~LuaState()
@@ -143,6 +146,15 @@ namespace slua {
     LuaState* LuaState::get(int index) {
         auto it = stateMapFromIndex.Find(index);
         if(it) return *it;
+        return nullptr;
+    }
+
+    LuaState* LuaState::get(const FString& name) {
+        for(auto& pair:stateMapFromIndex) {
+            auto state = pair.Value;
+            if(state->stateName==name)
+                return state;
+        }
         return nullptr;
     }
 
@@ -157,6 +169,7 @@ namespace slua {
 
     void LuaState::close() {
         if(mainState==this) mainState = nullptr;
+		releaseAllLink();
         
         if(L) {
             lua_close(L);
@@ -168,6 +181,8 @@ namespace slua {
             root->RemoveFromRoot();
             root = nullptr;
         }
+
+		SafeDelete(deadLoopCheck);
     }
 
 
@@ -183,6 +198,8 @@ namespace slua {
         si = ++StateIndex;
         root = NewObject<ULuaObject>();
 		root->AddToRoot();
+
+		deadLoopCheck = new FDeadLoopCheck();
 
         // use custom memory alloc func to profile memory footprint
         L = lua_newstate(LuaMemoryProfile::alloc,this);
@@ -254,6 +271,46 @@ namespace slua {
 		loadFileDelegate = func;
 	}
 
+	static void* findParent(GenericUserData* parent) {
+		auto pp = parent;
+		while(true) {
+			if (!pp->parent)
+				break;
+			pp = reinterpret_cast<GenericUserData*>(pp->parent);
+		}
+		return pp;
+	}
+
+	void LuaState::linkProp(void* parent, void* prop) {
+		auto parentud = findParent(reinterpret_cast<GenericUserData*>(parent));
+		auto propud = reinterpret_cast<GenericUserData*>(prop);
+		propud->parent = parentud;
+		auto& propList = propLinks.FindOrAdd(parentud);
+		propList.Add(propud);
+	}
+
+	void LuaState::releaseLink(void* prop) {
+		auto propud = reinterpret_cast<GenericUserData*>(prop);
+		if (propud->flag & UD_AUTOGC) {
+			auto propListPtr = propLinks.Find(propud);
+			if (propListPtr) 
+				for (auto& cprop : *propListPtr) 
+					reinterpret_cast<GenericUserData*>(cprop)->flag |= UD_HADFREE;
+		} else {
+			propud->flag |= UD_HADFREE;
+			auto propListPtr = propLinks.Find(propud->parent);
+			if (propListPtr) 
+				propListPtr->Remove(propud);
+		}
+	}
+
+	void LuaState::releaseAllLink() {
+		for (auto& pair : propLinks) 
+			for (auto& prop : pair.Value) 
+				reinterpret_cast<GenericUserData*>(prop)->flag |= UD_HADFREE;
+		propLinks.Empty();
+	}
+
     LuaVar LuaState::doBuffer(const uint8* buf,uint32 len, const char* chunk, LuaVar* pEnv) {
         AutoStack g(L);
         int errfunc = pushErrorHandler(L);
@@ -264,26 +321,23 @@ namespace slua {
             return LuaVar();
         }
         
-        if(pEnv != nullptr && pEnv->isTable())
-        {
-            pEnv->push(L);
-            lua_setupvalue(L, -2, 1);
-        }
-        
-        if(!lua_pcall(L, 0, LUA_MULTRET, errfunc)) {
-            int n = lua_gettop(L) - errfunc;
-            return LuaVar::wrapReturn(L,n);
-        }
-        return LuaVar();
+		LuaVar f(L, -1);
+		return f.call();
     }
 
     LuaVar LuaState::doString(const char* str, LuaVar* pEnv) {
+        // fix #31 & #30 issue, 
+        // vc compile optimize code cause cl.exe dead loop in release mode(no WITH_EDITOR)
+        // if turn optimze flag on
+        // so just write complex code to bypass link optimize
+        // like this, WTF!
+        uint32 len = strlen(str);
         #if WITH_EDITOR
 		FString md5FString = FMD5::HashAnsiString(UTF8_TO_TCHAR(str));
 		debugStringMap.Add(md5FString, UTF8_TO_TCHAR(str));
-        return doBuffer((const uint8*)str,strlen(str),TCHAR_TO_UTF8(*md5FString),pEnv);
+        return doBuffer((const uint8*)str,len,TCHAR_TO_UTF8(*md5FString),pEnv);
         #else
-        return doBuffer((const uint8*)str,strlen(str),str,pEnv);
+        return doBuffer((const uint8*)str,len,str,pEnv);
         #endif
     }
 
@@ -307,7 +361,13 @@ namespace slua {
         return ls->_pushErrorHandler(L);
     }
 
-    int LuaState::_pushErrorHandler(lua_State* state) {
+	LuaVar LuaState::initInnerCode(const char * str)
+	{
+		uint32 len = strlen(str);
+		return doBuffer((const uint8*)str, len, SLUA_LUACODE);
+	}
+
+	int LuaState::_pushErrorHandler(lua_State* state) {
         lua_pushcfunction(state,error);
         return lua_gettop(state);
     }
@@ -359,5 +419,87 @@ namespace slua {
         lua_pop(L,1);
         return ret;
     }
+
+	FDeadLoopCheck::FDeadLoopCheck()
+		: timeoutEvent(nullptr)
+		, timeoutCounter(0)
+		, stopCounter(0)
+		, frameCounter(0)
+	{
+		thread = FRunnableThread::Create(this, TEXT("FLuaDeadLoopCheck"), 0, TPri_BelowNormal);
+	}
+
+	FDeadLoopCheck::~FDeadLoopCheck()
+	{
+		Stop();
+		thread->WaitForCompletion();
+		SafeDelete(thread);
+	}
+
+	uint32 FDeadLoopCheck::Run()
+	{
+		while (stopCounter.GetValue() == 0) {
+			FPlatformProcess::Sleep(1.0f);
+			if (frameCounter.GetValue() != 0) {
+				timeoutCounter.Increment();
+				if(timeoutCounter.GetValue() >= MaxLuaExecTime)
+					onScriptTimeout();
+			}
+		}
+		return 0;
+	}
+
+	void FDeadLoopCheck::Stop()
+	{
+		stopCounter.Increment();
+	}
+
+	void FDeadLoopCheck::scriptEnter(ScriptTimeoutEvent* pEvent)
+	{
+		if (frameCounter.Increment() == 1) {
+			timeoutCounter.Set(0);
+			timeoutEvent = pEvent;
+		}
+	}
+
+	void FDeadLoopCheck::scriptLeave()
+	{
+		frameCounter.Decrement();
+	}
+
+	void FDeadLoopCheck::onScriptTimeout()
+	{
+		if (timeoutEvent) timeoutEvent->onTimeout();
+	}
+
+	LuaScriptCallGuard::LuaScriptCallGuard(lua_State * L_)
+		:L(L_)
+	{
+		auto ls = LuaState::get(L);
+		ls->deadLoopCheck->scriptEnter(this);
+	}
+
+	LuaScriptCallGuard::~LuaScriptCallGuard()
+	{
+		auto ls = LuaState::get(L);
+		ls->deadLoopCheck->scriptLeave();
+	}
+
+	void LuaScriptCallGuard::onTimeout()
+	{
+		auto hook = lua_gethook(L);
+		// if debugger isn't exists
+		if (hook == nullptr) {
+			// this function thread safe
+			lua_sethook(L, scriptTimeout, LUA_MASKLINE, 0);
+		}
+	}
+
+	void LuaScriptCallGuard::scriptTimeout(lua_State *L, lua_Debug *ar)
+	{
+		// only report once
+		lua_sethook(L, nullptr, 0, 0);
+		luaL_error(L, "script exec timeout");
+	}
 
 }

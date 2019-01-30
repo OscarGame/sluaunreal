@@ -18,13 +18,52 @@
 #include "LuaVar.h"
 #include <string>
 #include <memory>
+#include "HAL/Runnable.h"
+
+#define SLUA_LUACODE "[sluacode]"
 
 namespace slua {
+
+	struct ScriptTimeoutEvent {
+		virtual void onTimeout() = 0;
+	};
+
+	class FDeadLoopCheck : public FRunnable
+	{
+	public:
+		FDeadLoopCheck();
+		~FDeadLoopCheck();
+
+		void scriptEnter(ScriptTimeoutEvent* pEvent);
+		void scriptLeave();
+
+	protected:
+		uint32 Run() override;
+		void Stop() override;
+		void onScriptTimeout();
+	private:
+		ScriptTimeoutEvent* timeoutEvent;
+		FThreadSafeCounter timeoutCounter;
+		FThreadSafeCounter stopCounter;
+		FThreadSafeCounter frameCounter;
+		FRunnableThread* thread;
+	};
+
+	// check lua script dead loop
+	class LuaScriptCallGuard : public ScriptTimeoutEvent {
+	public:
+		LuaScriptCallGuard(lua_State* L);
+		virtual ~LuaScriptCallGuard();
+		void onTimeout() override;
+	private:
+		lua_State* L;
+		static void scriptTimeout(lua_State *L, lua_Debug *ar);
+	};
 
     class SLUA_UNREAL_API LuaState
     {
     public:
-        LuaState();
+        LuaState(const char* name=nullptr);
         virtual ~LuaState();
 
         /*
@@ -42,6 +81,9 @@ namespace slua {
         }
         // get LuaState from state index
         static LuaState* get(int index);
+
+        // get LuaState from name
+        static LuaState* get(const FString& name);
 
         // return specified index is valid state index
         inline static bool isValid(int index)  {
@@ -95,15 +137,46 @@ namespace slua {
         LuaVar createTable();
 
 
-        void addRef(UObject* obj) {
-            ensure(root);
-            root->AddRef(obj);
-        }
+		void addRef(UObject* obj) {
+			ensure(root);
+			root->AddRef(obj);
 
-        void removeRef(UObject* obj) {
-            ensure(root);
-            root->Remove(obj);
-        }
+			UClass* objClass = obj->GetClass();
+			int32* instanceNumPtr = classInstanceNums.Find(objClass);
+			if (!instanceNumPtr)
+			{
+				instanceNumPtr = &classInstanceNums.Add(objClass, 0);
+			}
+
+			(*instanceNumPtr)++;
+		}
+
+		void removeRef(UObject* obj) {
+			UClass* objClass = obj->GetClass();
+			int32* instanceNumPtr = classInstanceNums.Find(objClass);
+            ensure(instanceNumPtr);
+			(*instanceNumPtr)--;
+			if (*instanceNumPtr == 0)
+			{
+				classInstanceNums.Remove(objClass);
+
+				auto classFunctionsPtr = classMap.Find(objClass);
+				if (classFunctionsPtr)
+				{
+					delete *classFunctionsPtr;
+					classMap.Remove(objClass);
+				}
+			}
+
+			ensure(root);
+			root->Remove(obj);
+		}
+
+
+
+		const TMap<UObject*, UObject*>& cacheMap() {
+			return root->Cache;
+		}
         
         static int pushErrorHandler(lua_State* L);
     protected:
@@ -114,16 +187,29 @@ namespace slua {
     private:
         friend class LuaObject;
         friend class SluaUtil;
+		friend struct LuaEnums;
+		friend class LuaScriptCallGuard;
         lua_State* L;
         int cacheObjRef;
+		// init enums lua code
+		LuaVar initInnerCode(const char* s);
         int _pushErrorHandler(lua_State* L);
         static int _atPanic(lua_State* L);
+		void linkProp(void* parent, void* prop);
+		void releaseLink(void* prop);
+		void releaseAllLink();
+
+		TMap<void*, TArray<void*>> propLinks;
         ULuaObject* root;
         int stackCount;
         int si;
+        FString stateName;
 
-        TMap<FString,TMap<FString,UFunction*>*> classMap;
-        TMap<FString,UFunction*> instanceFuncMap;
+        TMap<UClass*,TMap<FString,UFunction*>*> classMap;
+
+		TMap<UClass*, int32> classInstanceNums;
+
+		FDeadLoopCheck* deadLoopCheck;
 
         static LuaState* mainState;
 

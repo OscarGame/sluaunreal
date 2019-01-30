@@ -125,7 +125,8 @@ namespace slua {
 
     lua_State* LuaVar::getState() const
     {
-        return *LuaState::get(stateIndex);
+		auto ls = LuaState::get(stateIndex);
+		return ls ? ls->getLuaState() : nullptr;
     }
 
     void LuaVar::init(lua_State* l,int p,LuaVar::Type type) {
@@ -154,14 +155,12 @@ namespace slua {
         case LV_FUNCTION: 
         case LV_TABLE:
         case LV_USERDATA:
-            //stateIndex = LuaState::get(l)->stateIndex();
             alloc(1);
             lua_pushvalue(l,p);
             vars[0].ref = new RefRef(l);
             vars[0].luatype=type;
             break;
         case LV_TUPLE:
-            //stateIndex = LuaState::get(l)->stateIndex();
             ensure(p>0 && lua_gettop(l)>=p);
             initTuple(l,p);
             break;
@@ -174,12 +173,16 @@ namespace slua {
         ensure(lua_gettop(l)>=n);
         alloc(n);
         int f = lua_gettop(l)-n+1;
-        for(int i=0;i<n;i++) {
+        for(size_t i=0;i<n;i++) {
             
             int p = i+f;
             int t = lua_type(l,p);
 
             switch(t) {
+            case LUA_TBOOLEAN:
+                vars[i].luatype = LV_BOOL;
+                vars[i].b = !!lua_toboolean(l, p);
+                break;
             case LUA_TNUMBER:
                 {
                     if(lua_isinteger(l,p)) {
@@ -206,6 +209,15 @@ namespace slua {
                 lua_pushvalue(l,p);
                 vars[i].ref = new RefRef(l);
                 break;
+			case LUA_TUSERDATA:
+				vars[i].luatype = LV_USERDATA;
+				lua_pushvalue(l, p);
+				vars[i].ref = new RefRef(l);
+				break;
+			case LUA_TLIGHTUSERDATA:
+				vars[i].luatype = LV_LIGHTUD;
+				vars[i].ptr = lua_touserdata(l, p);
+				break;
             case LUA_TNIL:
             default:
                 vars[i].luatype = LV_NIL;
@@ -233,7 +245,7 @@ namespace slua {
     }
 
     void LuaVar::free() {
-        for(int n=0;n<numOfVar;n++) {
+        for(size_t n=0;n<numOfVar;n++) {
             if( (vars[n].luatype==LV_FUNCTION || vars[n].luatype==LV_TABLE) 
                 && vars[n].ref->isValid() )
                 vars[n].ref->release();
@@ -453,12 +465,11 @@ namespace slua {
             pushVar(l,ov);
             return 1;
         }
-        else for(int n=0;n<numOfVar;n++) {
+        for(size_t n=0;n<numOfVar;n++) {
             const lua_var& ov = vars[n];
             pushVar(l,ov);
-            return numOfVar;
         }
-        return 0;
+        return numOfVar;
     }
 
     bool LuaVar::isValid() const {
@@ -532,11 +543,15 @@ namespace slua {
         LuaState::pushErrorHandler(L);
         lua_insert(L,top);
         vars[0].ref->push(L);
-        lua_insert(L,top+1);
-        // top is err handler
-        if(lua_pcallk(L,argn,LUA_MULTRET,top,NULL,NULL))
-            lua_pop(L,1);
-        lua_remove(L,top); // remove err handler;
+
+		{
+			LuaScriptCallGuard g(L);
+			lua_insert(L, top + 1);
+			// top is err handler
+			if (lua_pcallk(L, argn, LUA_MULTRET, top, NULL, NULL))
+				lua_pop(L, 1);
+			lua_remove(L, top); // remove err handler;
+		}
         return lua_gettop(L)-top+1;
     }
 
@@ -547,38 +562,54 @@ namespace slua {
         return 0;
     }
 
-    void LuaVar::callByUFunction(UFunction* func,uint8* parms) {
+    bool LuaVar::callByUFunction(UFunction* func,uint8* parms, LuaVar* pSelf) {
         
-        if(!func) return;
+        if(!func) return false;
 
         if(!isValid()) {
             Log::Error("State of lua function is invalid");
-            return;
+            return false;
         }
 
         const bool bHasReturnParam = func->ReturnValueOffset != MAX_uint16;
         if(func->ParmsSize==0 && !bHasReturnParam) {
-            call();
-            return;
+			int nArg = 0;
+			if (pSelf) {
+				pSelf->push();
+				nArg++;
+			}
+
+			auto L = getState();
+			int n = docall(nArg);
+			lua_pop(L, n);
+            return true;
         }
 
         int n=0;
+		if (pSelf) {
+			pSelf->push();
+			n++;
+		}
         for(TFieldIterator<UProperty> it(func);it && (it->PropertyFlags&CPF_Parm);++it) {
             UProperty* prop = *it;
             uint64 propflag = prop->GetPropertyFlags();
-            if((propflag&CPF_ReturnParm))
+            if((propflag&CPF_ReturnParm) || (propflag&CPF_OutParm))
                 continue;
 
             pushArgByParms(prop,parms+prop->GetOffset_ForInternal());
             n++;
         }
         docall(n);
+		return true;
     }
 
     void LuaVar::varClone(lua_var& tv,const lua_var& ov) const {
         switch(ov.luatype) {
         case LV_INT:
             tv.i = ov.i;
+            break;
+        case LV_BOOL:
+            tv.b = ov.b;
             break;
         case LV_NUMBER:
             tv.d = ov.d;
@@ -596,6 +627,10 @@ namespace slua {
         case LV_LIGHTUD:
             tv.ptr = ov.ptr;
             break;
+        // nil and tuple not need to clone
+        case LV_NIL:
+        case LV_TUPLE:
+            break;
         }
         tv.luatype = ov.luatype;
     }
@@ -605,7 +640,7 @@ namespace slua {
         numOfVar = other.numOfVar;
         if(numOfVar>0 && other.vars) {
             vars = new lua_var[numOfVar];
-            for(int n=0;n<numOfVar;n++) {
+            for(size_t n=0;n<numOfVar;n++) {
                 varClone( vars[n], other.vars[n] );
             }
         }

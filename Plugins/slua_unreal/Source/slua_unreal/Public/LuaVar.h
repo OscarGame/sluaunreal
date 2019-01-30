@@ -114,10 +114,17 @@ namespace slua {
         inline R castTo() {
             auto L = getState();
             push(L);
-            R r = ArgOperator::readArg<typename remove_cr<R>::type>(L,-1);
+            R r = ArgOperatorOpt::readArg<typename remove_cr<R>::type>(L,-1);
             lua_pop(L,1);
             return std::move(r);
         }
+		template<typename R>
+		inline void castTo(R& target) {
+			if (isValid())
+			{
+				target = castTo<R>();
+			}
+		}
 
         // return count of luavar if it's table or tuple, 
         // otherwise it's return 1
@@ -147,15 +154,22 @@ namespace slua {
 
         // get table by key, if luavar is table
         template<typename R,typename T>
-        R getFromTable(T key) const {
+        R getFromTable(T key,bool rawget=false) const {
             ensure(isTable());
             auto L = getState();
+			if (!L) return R();
             AutoStack as(L);
             push(L);
             LuaObject::push(L,key);
-            lua_gettable(L,-2);
-            return ArgOperator::readArg<typename remove_cr<R>::type>(L,-1);
+			if (rawget) lua_rawget(L, -2);
+			else lua_gettable(L,-2);
+            return ArgOperatorOpt::readArg<typename remove_cr<R>::type>(L,-1);
         }
+
+		template<typename R, typename T>
+		void getFromTable(T key, R& target) const {
+			target = getFromTable<R>(key);
+		}
 
         // set table by key and value
         template<typename K,typename V>
@@ -205,7 +219,7 @@ namespace slua {
         }
 
         bool toProperty(UProperty* p,uint8* ptr);
-        void callByUFunction(UFunction* ufunc,uint8* parms);
+        bool callByUFunction(UFunction* ufunc,uint8* parms,LuaVar* pSelf = nullptr);
     private:
         friend class LuaState;
 

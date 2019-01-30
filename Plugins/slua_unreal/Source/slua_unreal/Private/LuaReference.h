@@ -12,33 +12,14 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #pragma once
-
 #include "CoreMinimal.h"
-#include "Components/SceneComponent.h"
-#include "LuaState.h"
-#include "SluaComponent.generated.h"
+#include "UObject/UnrealType.h"
+#include "UObject/GCObject.h"
 
+namespace slua {
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
-class SLUA_UNREAL_API USluaComponent : public USceneComponent
-{
-	GENERATED_BODY()
-
-public:	
-	// Sets default values for this component's properties
-	USluaComponent();
-
-protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type reason);
-
-public:	
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	slua::LuaState* State() { return &state; }
-
-private:
-    slua::LuaState state;
-	
-};
+	namespace LuaReference{
+		void addRefByStruct(FReferenceCollector& collector, UStruct* us, void* base);
+		bool addRefByProperty(FReferenceCollector& collector, const UProperty* prop, void* ptr);
+	}
+}

@@ -17,8 +17,6 @@
 #include <utility>
 #include <cstddef>
 #include <type_traits>
-#include "SluaUtil.h"
-#include "LuaObject.h"
 
 namespace slua {
 
@@ -46,8 +44,44 @@ namespace slua {
     template <int n>
     using MakeIntList = typename MakeIntList_t<n>::type;
 
+	template<typename CallableType, typename ReturnType, typename ... ArgTypes>
+	struct CallableExpand
+	{
+		typedef CallableType* FuncType;
+		typedef TFunction<ReturnType(ArgTypes...)> TFunctionType;
 
-    
+		inline static ReturnType invoke(lua_State* L, void* ptr, ArgTypes&& ... args)
+		{
+			return Func != nullptr ? (*Func)(std::forward<ArgTypes>(args)...) : ReturnType();
+		}
+
+		inline static TFunctionType makeTFunctionProxy(lua_State* L, int p);
+
+		static int LuaCFunction(lua_State* L);
+
+		static FuncType Func;
+	};
+
+	template<typename CallableType, typename ReturnType, typename ... ArgTypes>
+	typename CallableExpand<CallableType, ReturnType, ArgTypes ...>::FuncType CallableExpand<CallableType, ReturnType, ArgTypes ...>::Func = nullptr;
+			
+	template<typename CallableType>
+	struct LuaCallableBinding
+	{
+		template<typename ClassType, typename ReturnType, typename ... ArgType>
+		static auto DeducePrototype(ReturnType(ClassType::*)(ArgType ...) const)
+		{
+			return CallableExpand<CallableType, ReturnType, ArgType ...>();
+		}
+
+		template<typename ClassType, typename ReturnType, typename ... ArgType>
+		static auto DeducePrototype(ReturnType(ClassType::*)(ArgType ...))
+		{
+			return CallableExpand<CallableType, ReturnType, ArgType ...>();
+		}
+
+		typedef decltype(DeducePrototype(&CallableType::operator())) Prototype;
+	};
 
 	struct ArgOperator {
 
@@ -66,9 +100,57 @@ namespace slua {
 			return LuaObject::checkEnumValue<T>(L, p);
 		}
 
+		template <typename T> struct TIsTFunction { enum { Value = false }; };
+		template <typename FuncType> struct TIsTFunction<TFunction<FuncType>> { enum { Value = true }; };
+
 		template <typename T>
-		static typename std::enable_if<!TIsTArray<T>::Value && !TIsTMap<T>::Value && !std::is_enum<T>::value, T>::type readArg(lua_State * L, int p) {
+		static typename std::enable_if<TIsTFunction<T>::Value, T>::type readArg(lua_State * L, int p) {
+			return LuaCallableBinding<T>::Prototype::makeTFunctionProxy(L, p); 
+		}
+
+		template <typename T>
+		static typename std::enable_if<!TIsTArray<T>::Value && !TIsTMap<T>::Value && !TIsTFunction<T>::Value && !std::is_enum<T>::value, T>::type readArg(lua_State * L, int p) {
 			return LuaObject::checkValue<T>(L, p);
+		}
+
+	};
+
+	struct ArgOperatorOpt {
+
+		template <typename T>
+		static typename std::enable_if<TIsTArray<T>::Value, T>::type readArg(lua_State * L, int p) {
+			if (!lua_isuserdata(L, p))
+				return T();
+			return LuaObject::checkTArray<T>(L, p);
+		}
+
+		template <typename T>
+		static typename std::enable_if<TIsTMap<T>::Value, T>::type readArg(lua_State * L, int p) {
+			if (!lua_isuserdata(L, p))
+				return T();
+			return LuaObject::checkTMap<T>(L, p);
+		}
+
+		template <typename T>
+		static typename std::enable_if<std::is_enum<T>::value, T>::type readArg(lua_State * L, int p) {
+			if (!lua_isinteger(L, p))
+				return T();
+			return LuaObject::checkEnumValue<T>(L, p);
+		}
+
+		template <typename T> struct TIsTFunction { enum { Value = false }; };
+		template <typename FuncType> struct TIsTFunction<TFunction<FuncType>> { enum { Value = true }; };
+
+		template <typename T>
+		static typename std::enable_if<TIsTFunction<T>::Value, T>::type readArg(lua_State * L, int p) {
+			if (!lua_isfunction(L, p))
+				return T();
+			return LuaCallableBinding<T>::Prototype::makeTFunctionProxy(L, p);
+		}
+
+		template <typename T>
+		static typename std::enable_if<!TIsTArray<T>::Value && !TIsTMap<T>::Value && !TIsTFunction<T>::Value && !std::is_enum<T>::value, T>::type readArg(lua_State * L, int p) {
+			return LuaObject::checkValueOpt<T>(L, p);
 		}
 
 	};
@@ -227,46 +309,22 @@ namespace slua {
         static int LuaCFunction(lua_State* L) {
             return func(L);
         }
+	};
+
+    template<int Offset>
+    struct LuaCppBinding<decltype(nullptr), nullptr, Offset> {
+
+        static int LuaCFunction(lua_State* L) {
+            luaL_error(L,"Can't be accessed");
+            return 0;
+        }
     };
 
-	template<typename LambdaType, typename ReturnType, typename ... ArgTypes>
-	struct LambdaPrototype
+	template<typename CallableType, typename ReturnType, typename ... ArgTypes>
+	int CallableExpand<CallableType, ReturnType, ArgTypes...>::LuaCFunction(lua_State* L)
 	{
-		typedef LambdaType* FuncType;
-
-		static ReturnType invoke(lua_State* L, void* ptr, ArgTypes&& ... args)
-		{
-			return Func != nullptr ? (*Func)(std::forward<ArgTypes>(args)...) : ReturnType();
-		}
-
-		static int LuaCFunction(lua_State* L)
-		{
-			return FunctionBind<decltype(&invoke), invoke, 1>::invoke(L, nullptr);
-		}
-
-		static FuncType Func;
-	};
-
-	template<typename LambdaType, typename ReturnType, typename ... ArgTypes>
-	typename LambdaPrototype<LambdaType, ReturnType, ArgTypes ...>::FuncType LambdaPrototype<LambdaType, ReturnType, ArgTypes ...>::Func = nullptr;
-
-	template<typename LambdaType>
-	struct LuaLambdaBinding
-	{
-		template<typename ClassType, typename ReturnType, typename ... ArgType>
-		static auto DeducePrototype(ReturnType(ClassType::*)(ArgType ...) const)
-		{
-			return LambdaPrototype<LambdaType, ReturnType, ArgType ...>();
-		}
-
-		template<typename ClassType, typename ReturnType, typename ... ArgType>
-		static auto DeducePrototype(ReturnType(ClassType::*)(ArgType ...))
-		{
-			return LambdaPrototype<LambdaType, ReturnType, ArgType ...>();
-		}
-
-		typedef decltype(DeducePrototype(&LambdaType::operator())) Prototype;
-	};
+		return FunctionBind<decltype(&invoke), invoke, 1>::invoke(L, nullptr);
+	}
 
     struct SLUA_UNREAL_API LuaClass {
         LuaClass(lua_CFunction reg);
@@ -323,7 +381,7 @@ namespace slua {
     #define __DefLuaClassTail(CLS) \
         static int Lua##CLS##_gc(lua_State* L) { \
             UserData<CLS*>* UD = reinterpret_cast<UserData<CLS*>*>(lua_touserdata(L,1)); \
-            if(UD->owned) delete UD->ud; \
+            if(UD->flag & UD_AUTOGC) delete UD->ud; \
             return 0;\
         } \
         static int Lua##CLS##_tostring(lua_State* L) { \
@@ -334,7 +392,7 @@ namespace slua {
             return 1; \
         } \
         static int Lua##CLS##_setup(lua_State* L); \
-        LuaClass Lua##CLS##__(Lua##CLS##_setup); \
+        static LuaClass Lua##CLS##__(Lua##CLS##_setup); \
         int Lua##CLS##_setup(lua_State* L) { \
 			static_assert(!std::is_base_of<UObject, CLS>::value, "UObject class shouldn't use LuaCppBinding. Use REG_EXTENSION instead."); \
             AutoStack autoStack(L); \
@@ -366,11 +424,18 @@ namespace slua {
         LuaObject::addMethod(L, #NAME, x, inst); \
     } \
 
-    #define DefLuaMethod_WITHTYPE(NAME,M,T) { \
+    #define DefLuaMethod_With_Type(NAME,M,T) { \
         lua_CFunction x=LuaCppBinding<T,M>::LuaCFunction; \
         constexpr bool inst=std::is_member_function_pointer<T>::value; \
         LuaObject::addMethod(L, #NAME, x, inst); \
     } \
+
+    #define DefLuaMethod_With_Lambda(NAME,Static,...) { \
+        static auto lambda = __VA_ARGS__; \
+		using BindType = LuaCallableBinding<decltype(lambda)>::Prototype; \
+		BindType::Func = &lambda; \
+		LuaObject::addMethod(L, #NAME, BindType::LuaCFunction, !Static); \
+    }
 
     #define DefGlobalMethod(NAME,M) { \
         lua_CFunction x=LuaCppBinding<decltype(M),M>::LuaCFunction; \
@@ -393,7 +458,7 @@ namespace slua {
 
 	#define REG_EXTENSION_METHOD_LAMBDA(U,N, Static, ...) { \
 		static auto lambda = __VA_ARGS__; \
-		using BindType = LuaLambdaBinding<decltype(lambda)>::Prototype; \
+		using BindType = LuaCallableBinding<decltype(lambda)>::Prototype; \
 		BindType::Func = &lambda; \
 		LuaObject::addExtensionMethod(U::StaticClass(), N, BindType::LuaCFunction, Static); \
 	}
