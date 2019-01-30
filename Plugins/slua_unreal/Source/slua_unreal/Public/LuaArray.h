@@ -15,24 +15,19 @@
 #include "CoreMinimal.h"
 #include "lua/lua.hpp"
 #include "UObject/UnrealType.h"
-#include "UObject/GCObject.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 namespace slua {
 
-    class SLUA_UNREAL_API LuaArray : public FGCObject {
+    class SLUA_UNREAL_API LuaArray {
     public:
         static void reg(lua_State* L);
-        static void clone(FScriptArray* destArray, UProperty* p, const FScriptArray* srcArray);
-		static int push(lua_State* L, UProperty* prop, FScriptArray* array);
-		static int push(lua_State* L,UArrayProperty* prop,UObject* obj);
+        static int push(lua_State* L,UProperty* prop,FScriptArray* array);
 
-		LuaArray(UProperty* prop, FScriptArray* buf);
-		LuaArray(UArrayProperty* prop, UObject* obj);
+        LuaArray(UProperty* prop,FScriptArray* buf);
         ~LuaArray();
 
         const FScriptArray* get() {
-            return array;
+            return &array;
         }
 
         // Cast FScriptArray to TArray<T> if ElementSize matched
@@ -40,23 +35,13 @@ namespace slua {
         const TArray<T>& asTArray(lua_State* L) const {
             if(sizeof(T)!=inner->ElementSize)
                 luaL_error(L,"Cast to TArray error, element size isn't mathed(%d,%d)",sizeof(T),inner->ElementSize);
-            return *(reinterpret_cast<const TArray<T>*>( array ));
+            return *(reinterpret_cast<const TArray<T>*>( &array ));
         }
-
-        virtual void AddReferencedObjects( FReferenceCollector& Collector ) override;
-
-#if (ENGINE_MINOR_VERSION>=20) && (ENGINE_MAJOR_VERSION>=4)
-        virtual FString GetReferencerName() const override
-        {
-            return "LuaArray";
-        }
-#endif
         
     protected:
         static int __ctor(lua_State* L);
         static int Num(lua_State* L);
         static int Get(lua_State* L);
-		static int Set(lua_State* L);
         static int Add(lua_State* L);
         static int Remove(lua_State* L);
         static int Insert(lua_State* L);
@@ -66,9 +51,7 @@ namespace slua {
 
     private:
         UProperty* inner;
-        FScriptArray* array;
-		UArrayProperty* prop;
-		UObject* propObj;
+        FScriptArray array;
 
         void clear();
         uint8* getRawPtr(int index) const;

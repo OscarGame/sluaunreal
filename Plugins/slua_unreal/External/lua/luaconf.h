@@ -242,6 +242,7 @@
 ** LUA_BUILD_AS_DLL to get it).
 */
 #if defined(LUA_BUILD_AS_DLL)	/* { */
+
 #if defined(LUA_CORE) || defined(LUA_LIB)	/* { */
 #define LUA_API __declspec(dllexport)
 #else						/* }{ */
@@ -253,11 +254,6 @@
 #define LUA_API		extern
 
 #endif				/* } */
-
-#if defined(_WIN32)
-#undef LUA_API
-#define LUA_API extern "C" __declspec(dllexport)
-#endif
 
 /* more often than not the libs go together with the core */
 #define LUALIB_API	LUA_API
@@ -779,8 +775,9 @@
 ** without modifying the main part of the file.
 */
 
+
+
+
+
 #endif
-
-
-
 

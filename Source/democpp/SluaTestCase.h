@@ -20,18 +20,6 @@
 #include "SluaTestCase.generated.h"
 
 
-USTRUCT(BlueprintType)
-struct FUserInfo {
-	GENERATED_BODY()
-public:
-	UPROPERTY()
-	FString name;
-	UPROPERTY()
-	int id;
-	UPROPERTY()
-	int level;
-};
-
 UCLASS()
 class USluaTestCase : public UObject {
     GENERATED_UCLASS_BODY()
@@ -39,20 +27,6 @@ public:
     UFUNCTION(BlueprintCallable, Category="Lua|TestCase")
     static void StaticFunc();
 
-    UPROPERTY(BlueprintReadOnly)
-    TArray<UObject*> foos;
-
-    UPROPERTY(BlueprintReadWrite)
-    TMap<FString,FString> maps;
-
-    UPROPERTY(BlueprintReadWrite)
-    TArray<FString> strs;
-
-    UFUNCTION(BlueprintCallable, Category="Lua|TestCase")
-    void setupfoo(UObject* obj);
-
-    UFUNCTION(BlueprintCallable, Category="Lua|TestCase")
-    void delfoo();
 
     UFUNCTION(BlueprintCallable, Category="Lua|TestCase")
     TArray<int> GetArray();
@@ -87,9 +61,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Lua|TestCase")
 	FString TestIntStr_Str(int i, FString s);
-
-	UFUNCTION(BlueprintCallable, Category = "Lua|TestCase")
-	const FUserInfo& GetUserInfo();
 
 	UFUNCTION(BlueprintCallable, Category = "Lua|TestCase")
 	ESlateVisibility TestIntStrEnum_Enum(int i, FString s, ESlateVisibility e);
@@ -129,10 +100,4 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="Lua|TestCase")
     int FuncWithStr(FString str);
-
-    const USluaTestCase* constRetFunc() { return nullptr; }
-
-	FORCEINLINE int inlineFunc() { return 1; }
-
-	FUserInfo info;
 };

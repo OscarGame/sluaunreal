@@ -46,11 +46,10 @@ ULuaBlueprintLibrary::ULuaBlueprintLibrary(const FObjectInitializer& ObjectIniti
 	);
 }
 
-FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(FString funcname,const TArray<FLuaBPVar>& args,FString StateName) {
+FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(FString funcname,const TArray<FLuaBPVar>& args) {
     using namespace slua;
     // get main state
     auto ls = LuaState::get();
-    if(StateName.Len()!=0) ls = LuaState::get(StateName);
     if(!ls) return FLuaBPVar();
     LuaVar f = ls->get(TCHAR_TO_UTF8(*funcname));
     if(f.isFunction()) {
@@ -63,11 +62,10 @@ FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(FString funcname,const TArray<
     return FLuaBPVar();
 }
 
-FLuaBPVar ULuaBlueprintLibrary::CallToLua(FString funcname,FString StateName) {
+FLuaBPVar ULuaBlueprintLibrary::CallToLua(FString funcname) {
     using namespace slua;
     // get main state
     auto ls = LuaState::get();
-    if(StateName.Len()!=0) ls = LuaState::get(StateName);
     if(!ls) return FLuaBPVar();
     LuaVar f = ls->get(TCHAR_TO_UTF8(*funcname));
     if(f.isFunction()) {

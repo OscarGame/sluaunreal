@@ -30,9 +30,6 @@ namespace {
         case LogLevel::LL_Error:
             UE_LOG(Slua, Error, TEXT("%s"), UTF8_TO_TCHAR(buf));
             break;
-        default:
-            UE_LOG(Slua, Log, TEXT("%s"), UTF8_TO_TCHAR(buf));
-            break;
         }
     }
 
@@ -44,8 +41,6 @@ namespace {
         case LogLevel::LL_Error:
             UE_LOG(Slua, Error, TEXT("%s"), buf);
             break;
-        default:
-            UE_LOG(Slua, Log, TEXT("%s"), buf);
         }
     }
 }

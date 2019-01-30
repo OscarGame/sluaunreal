@@ -1,4 +1,4 @@
-﻿// Tencent is pleased to support the open source community by making sluaunreal available.
+// Tencent is pleased to support the open source community by making sluaunreal available.
 
 // Copyright (C) 2018 THL A29 Limited, a Tencent company. All rights reserved.
 // Licensed under the BSD 3-Clause License (the "License"); 
@@ -16,13 +16,12 @@
 #include "LuaObject.h"
 #include "LuaCppBinding.h"
 #include "Log.h"
-#include "SluaTestActor.h"
+#include "SluaActor.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/Package.h"
 #include "Blueprint/UserWidget.h"
 #include "Misc/AssertionMacros.h"
 #include "LuaVar.h"
-#include "LuaCppBindingPost.h"
 
 namespace slua {
 
@@ -65,7 +64,7 @@ namespace slua {
         }
 
         // raw ptr not hold by lua, lua not collect it
-        static const Foo* getInstance() {
+        static Foo* getInstance() {
             static Foo s_inst(2048);
             return &s_inst;
         }
@@ -97,16 +96,6 @@ namespace slua {
             return Fruit::Apple;
         }
 
-        void setCallback(const TFunction<void(int)>& func) {
-            callback = func;
-        }
-
-        void docall() {
-            callback(1024);
-            callback = nullptr;
-        }
-
-        TFunction<void(int)> callback;
         int value;
     };
 
@@ -116,13 +105,8 @@ namespace slua {
         DefLuaMethod(getStr,&Foo::getStr)
         DefLuaMethod(getInstance,&Foo::getInstance)
         DefLuaMethod(virtualFunc,&Foo::virtualFunc)
-        DefLuaMethod(setCallback,&Foo::setCallback)
-        DefLuaMethod(docall,&Foo::docall)
-        DefLuaMethod_With_Type(getFruit_1,&Foo::getFruit,Fruit (Foo::*) ())
-        DefLuaMethod_With_Type(getFruit_2,&Foo::getFruit,Fruit (Foo::*) (int))
-        DefLuaMethod_With_Lambda(helloWorld,false,[]()->void {
-            slua::Log::Log("Hello World from slua");
-        })
+        DefLuaMethod_WITHTYPE(getFruit_1,&Foo::getFruit,Fruit (Foo::*) ())
+        DefLuaMethod_WITHTYPE(getFruit_2,&Foo::getFruit,Fruit (Foo::*) (int))
     EndDef(Foo,&Foo::create)
 
     class FooChild : public Foo {
@@ -219,6 +203,7 @@ namespace slua {
     EndDef(PerfTest,&PerfTest::create)
 }
 
+
 USluaTestCase::USluaTestCase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -230,26 +215,7 @@ USluaTestCase::USluaTestCase(const FObjectInitializer& ObjectInitializer)
         auto clazz = LuaObject::checkUD<UClass>(L,2);
         bool ret = UD->IsA(clazz);
         return LuaObject::push(L,ret);
-    });  
-    REG_EXTENSION_METHOD(USluaTestCase, "constRetFunc", &USluaTestCase::constRetFunc);
-	REG_EXTENSION_METHOD(USluaTestCase, "inlineFunc", &USluaTestCase::inlineFunc);
-
-	info.name = UTF8_TO_TCHAR("女战士");
-	info.id = 1001001;
-	info.level = 12;
-}
-
-void USluaTestCase::setupfoo(UObject* obj) {
-    foos.Add(obj);
-}
-
-void USluaTestCase::delfoo() {
-    if(foos.Num()>0)
-        foos.RemoveAt(0);
-}
-
-const FUserInfo& USluaTestCase::GetUserInfo() {
-	return info;
+    });
 }
 
 TArray<int> USluaTestCase::GetArray() {
@@ -334,9 +300,9 @@ UUserWidget* USluaTestCase::GetWidget(FString ui) {
     TSubclassOf<UUserWidget> uclass = LoadClass<UUserWidget>(NULL, *cui);
     if(uclass==nullptr)
         return nullptr;
-    if(!ASluaTestActor::instance)
+    if(!ASluaActor::instance)
         return nullptr;
-    UWorld* wld = ASluaTestActor::instance->GetWorld();
+    UWorld* wld = ASluaActor::instance->GetWorld();
     if(!wld)
         return nullptr;
     UUserWidget* widget = CreateWidget<UUserWidget>(wld,uclass);

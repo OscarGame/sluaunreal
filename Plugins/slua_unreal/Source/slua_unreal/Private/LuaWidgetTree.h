@@ -26,7 +26,6 @@ namespace slua {
         static int setupMT(lua_State* L);
         static int FindWidget(lua_State* L);
         static int RemoveWidget(lua_State* L);
-        static int GetAllWidgets(lua_State* L);
     };
 
 

@@ -30,16 +30,13 @@
 #else
 #include "Engine/GameEngine.h"
 #endif
-#include "LuaMemoryProfile.h"
 
 namespace slua {
 
     void SluaUtil::openLib(lua_State* L) {
         lua_newtable(L);
-        RegMetaMethod(L, loadUI);
-        RegMetaMethod(L, createDelegate);
-		RegMetaMethod(L, loadClass);
-		RegMetaMethod(L, dumpUObjects);
+        RegMetaMethod(L,loadUI);
+        RegMetaMethod(L,createDelegate);
         lua_setglobal(L,"slua");
     }
 
@@ -49,27 +46,9 @@ namespace slua {
         lua_setfield(L,-2,fn);
         lua_pop(L,1);
     }
-
-    template<typename T>
-    UClass* loadClassT(const char* cls) {
-        TArray<FStringFormatArg> Args;
-        Args.Add(UTF8_TO_TCHAR(cls));
-
-        // load blueprint widget from cpp, need add '_C' tail
-        auto cui = FString::Format(TEXT("Blueprint'{0}_C'"),Args);
-		UClass* uclass = LoadClass<T>(NULL, *cui);
-        return uclass;
-    }
-
-    int SluaUtil::loadClass(lua_State* L) {
-        const char* cls = luaL_checkstring(L,1);
-		UClass* uclass = loadClassT<UObject>(cls);
-        if(uclass==nullptr) luaL_error(L,"Can't find class named %s",cls);
-        return LuaObject::pushClass(L,uclass);
-    }
     
     int SluaUtil::loadUI(lua_State* L) {
-
+        
         UGameInstance* GameInstance = nullptr;
         #if WITH_EDITOR
         UUnrealEdEngine* engine = Cast<UUnrealEdEngine>(GEngine);
@@ -79,11 +58,18 @@ namespace slua {
         if(engine) GameInstance = engine->GameInstance;
         #endif
         
-        if(!GameInstance) luaL_error(L,"gameinstance missing");
-        
-        const char* cls = luaL_checkstring(L,1);
-        auto uclass = loadClassT<UUserWidget>(cls);
-        if(uclass==nullptr) luaL_error(L,"Can't find class named %s",cls);
+        if(!GameInstance)
+            luaL_error(L,"GameInstance is null");
+
+        const char* ui = luaL_checkstring(L,1);
+
+        TArray<FStringFormatArg> Args;
+        Args.Add(UTF8_TO_TCHAR(ui));
+
+        // load blueprint widget from cpp, need add '_C' tail
+        auto cui = FString::Format(TEXT("Blueprint'{0}_C'"),Args);
+        TSubclassOf<UUserWidget> uclass = LoadClass<UUserWidget>(NULL, *cui);
+        if(uclass==nullptr) luaL_error(L,"Can't find ui named %s",ui);
         
         UUserWidget* widget = CreateWidget<UUserWidget>(GameInstance,uclass);
         return LuaObject::push(L,widget);
@@ -95,33 +81,4 @@ namespace slua {
         obj->bindFunction(L,1);
         return LuaObject::push(L,obj);
     }
-	int SluaUtil::dumpUObjects(lua_State * L)
-	{
-		auto state = LuaState::get(L);
-		auto& map = state->cacheMap();
-		lua_newtable(L);
-		int index = 1;
-		for (auto& it : map) {
-			LuaObject::push(L, getUObjName(it.Key));
-			lua_seti(L, -2, index++);
-		}
-		return 1;
-	}
-
-#if WITH_EDITOR
-	void dumpUObjects() {
-		auto state = LuaState::get();
-		if (!state) return;
-		auto& map = state->cacheMap();
-		for (auto& it : map) {
-			Log::Log("Pushed UObject %s", TCHAR_TO_UTF8(*getUObjName(it.Key)));
-		}
-	}
-
-	static FAutoConsoleCommand CVarDumpUObjects(
-		TEXT("slua.DumpUObjects"),
-		TEXT("Dump all uobject that referenced by lua in main state"),
-		FConsoleCommandDelegate::CreateStatic(dumpUObjects),
-		ECVF_Cheat);
-#endif
 }

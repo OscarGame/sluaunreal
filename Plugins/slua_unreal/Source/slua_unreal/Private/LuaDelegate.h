@@ -30,33 +30,21 @@ public:
 
     ~ULuaDelegate();
 
+
     virtual void ProcessEvent( UFunction* Function, void* Parms );
     void bindFunction(slua::lua_State *L, int p, UFunction *func);
     void bindFunction(slua::lua_State *L, int p);
     void bindFunction(UFunction *func);
-	void dispose();
-
-#if WITH_EDITOR
-	void setPropName(FString name) {
-		pName = name;
-	}
-
-	FString getPropName() {
-		return pName;
-	}
-#endif
-
 private:
     slua::LuaVar* luafunction;
     UFunction* ufunction;
-	FString pName;
 };
 
 namespace slua {
 
-    class LuaMultiDelegate {
+    class LuaDelegate {
     public:
-        static int push(lua_State* L,FMulticastScriptDelegate* delegate,UFunction* ufunc, FString pName);
+        static int push(lua_State* L,FMulticastScriptDelegate* delegate,UFunction* ufunc);
     private:
         static int setupMT(lua_State* L);
         static int instanceIndex(lua_State* L);
@@ -65,16 +53,5 @@ namespace slua {
         static int Clear(lua_State* L);
         static int gc(lua_State* L);
     };
-
-	class LuaDelegate {
-	public:
-		static int push(lua_State* L, FScriptDelegate* delegate, UFunction* ufunc, FString pName);
-	private:
-		static int setupMT(lua_State* L);
-		static int instanceIndex(lua_State* L);
-		static int Bind(lua_State* L);
-		static int Clear(lua_State* L);
-		static int gc(lua_State* L);
-	};
 }
 
